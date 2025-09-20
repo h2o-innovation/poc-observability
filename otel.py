@@ -177,9 +177,9 @@ class CustomPyroscope:
         try:
             # Configure Pyroscope
             if os.environ.get("SETUP") == "docker":
-                server_address = "http://alloy:4040"
+                server_address = "http://alloy:4041"
             else:
-                server_address = "http://localhost:4040"
+                server_address = "http://localhost:4041"
             
             pyroscope.configure(
                 application_name=application_name,  # nome da aplicação
