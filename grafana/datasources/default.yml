@@ -44,3 +44,13 @@ datasources:
       filterBySpanID: false
     tracesToMetrics:
       datasourceUid: 'prometheus'
+
+- name: pyroscope
+  type: grafana-pyroscope-datasource
+  url: http://pyroscope:4040
+  editable: true
+  jsonData:
+    backendType: "pyroscope"
+    httpHeaderName1: "Content-Type"
+  secureJsonData:
+    httpHeaderValue1: "application/json"

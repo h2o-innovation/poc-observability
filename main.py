@@ -1,4 +1,4 @@
-from otel import CustomLogFW, CustomMetrics, CustomTracer
+from otel import CustomLogFW, CustomMetrics, CustomTracer, CustomPyroscope
 from opentelemetry import metrics, trace
 from opentelemetry.trace import Status, StatusCode
 import threading
@@ -20,6 +20,12 @@ class AdventureGame:
         service_name = "adventure"
         # Get the adventurer's name from the user
         self.adventurer_name = input("Enter your name, brave adventurer: ")
+        
+        # Variáveis para tracking de erros
+        self.total_errors = 0
+        self.total_attempts = 0
+        
+        # Setup OpenTelemetry components
         logFW = CustomLogFW(service_name=service_name)
         handler = logFW.setup_logging()
         logging.getLogger().addHandler(handler)
@@ -32,6 +38,9 @@ class AdventureGame:
         ct = CustomTracer(service_name=service_name)
         self.trace = ct.get_trace()
         self.tracer = self.trace.get_tracer(service_name)
+        
+        # Setup Pyroscope profiling
+        self.profiler = CustomPyroscope(service_name=service_name)
         
         # Create an observable gauge for the forge heat level (keep this as gauge)
         self.forge_heat_gauge = meter.create_observable_gauge(
@@ -60,6 +69,23 @@ class AdventureGame:
         )
 
         self.evil_sword_counter.add(0)  # Initialize the evil sword counter to 0
+
+        # Métricas para tracking de erros
+        self.error_counter = meter.create_counter(
+            name="error_total",
+            description="Total number of errors by type and severity"
+        )
+        
+        self.error_attempts_counter = meter.create_counter(
+            name="error_attempts_total", 
+            description="Total number of operation attempts that could result in errors"
+        )
+        
+        self.error_rate_gauge = meter.create_observable_gauge(
+            name="error_rate",
+            description="Current error rate percentage",
+            callbacks=[self.observe_error_rate]
+        )
 
         self.game_active = True
         self.current_location = "start"
@@ -218,11 +244,13 @@ class AdventureGame:
         thread.start()
 
     def increase_heat_periodically(self):
-        if self.is_heating_forge:
-            self.heat += 1
-            if self.heat >= 50 and not self.blacksmith_burned_down:
-                self.blacksmith_burned_down = True
-                self.is_heating_forge = False
+        # Adicionar profiling contextual para operações da forja
+        with self.profiler.tag_wrapper({"operation": "forge_heating", "adventurer": self.adventurer_name}):
+            if self.is_heating_forge:
+                self.heat += 1
+                if self.heat >= 50 and not self.blacksmith_burned_down:
+                    self.blacksmith_burned_down = True
+                    self.is_heating_forge = False
     
     def observe_forge_heat(self, observer):
         return [metrics.Observation(value=self.heat, attributes={"location": "blacksmith"})]
@@ -253,6 +281,17 @@ class AdventureGame:
             sword_count = 0
         # Standard observation - exemplars will be handled automatically by the SDK
         return [metrics.Observation(value=sword_count, attributes={})]
+
+    def observe_error_rate(self, observer):
+        """
+        Calcula e observa a taxa de erro atual como porcentagem.
+        """
+        if self.total_attempts == 0:
+            error_rate = 0.0
+        else:
+            error_rate = (self.total_errors / self.total_attempts) * 100
+        
+        return [metrics.Observation(value=error_rate, attributes={"adventurer": self.adventurer_name})]
 
     def cool_forge(self):
         self.heat = 0
@@ -537,6 +576,124 @@ class AdventureGame:
 
         # Start the game again
         self.play()
+
+    def simulate_error(self, error_type="random"):
+        """
+        Simula diferentes tipos de erros para demonstração de observabilidade.
+        
+        Args:
+            error_type: Tipo de erro a simular ('network', 'database', 'memory', 'validation', 'timeout', 'random')
+        """
+        import random
+        import time
+        
+        error_types = {
+            'network': {
+                'exception': ConnectionError,
+                'message': 'Failed to connect to external service',
+                'severity': 'high',
+                'operation': 'external_api_call'
+            },
+            'database': {
+                'exception': RuntimeError,
+                'message': 'Database connection timeout',
+                'severity': 'critical',
+                'operation': 'database_query'
+            },
+            'memory': {
+                'exception': MemoryError,
+                'message': 'Insufficient memory to complete operation',
+                'severity': 'critical', 
+                'operation': 'memory_allocation'
+            },
+            'validation': {
+                'exception': ValueError,
+                'message': 'Invalid input data received',
+                'severity': 'medium',
+                'operation': 'data_validation'
+            },
+            'timeout': {
+                'exception': TimeoutError,
+                'message': 'Operation timed out after 30 seconds',
+                'severity': 'high',
+                'operation': 'long_running_task'
+            }
+        }
+        
+        # Selecionar tipo de erro
+        if error_type == "random":
+            error_type = random.choice(list(error_types.keys()))
+        
+        error_config = error_types.get(error_type, error_types['validation'])
+        
+        # Criar span para o erro
+        with self.tracer.start_as_current_span(f"error_simulation_{error_config['operation']}") as span:
+            # Adicionar tags de profiling para o erro
+            with self.profiler.tag_wrapper({
+                "operation": "error_simulation",
+                "error_type": error_type,
+                "severity": error_config['severity'],
+                "adventurer": self.adventurer_name
+            }):
+                try:
+                    # Simular algum processamento antes do erro
+                    time.sleep(random.uniform(0.1, 0.5))
+                    
+                    # Log estruturado do início da operação
+                    logging.info(
+                        f"Starting {error_config['operation']} operation",
+                        extra={
+                            "operation": error_config['operation'],
+                            "error_type": error_type,
+                            "adventurer": self.adventurer_name
+                        }
+                    )
+                    
+                    # Atualizar métricas de tentativas
+                    self.error_attempts_counter.add(1, attributes={
+                        "error_type": error_type,
+                        "operation": error_config['operation']
+                    })
+                    
+                    # Simular o erro
+                    raise error_config['exception'](error_config['message'])
+                    
+                except Exception as e:
+                    # Configurar span com erro
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    span.add_event("Error occurred", {
+                        "error.type": error_type,
+                        "error.message": str(e),
+                        "error.severity": error_config['severity']
+                    })
+                    
+                    # Atualizar métricas de erro
+                    self.error_counter.add(1, attributes={
+                        "error_type": error_type,
+                        "operation": error_config['operation'],
+                        "severity": error_config['severity']
+                    })
+                    
+                    # Log estruturado do erro
+                    logging.error(
+                        f"Error in {error_config['operation']}: {str(e)}",
+                        extra={
+                            "operation": error_config['operation'],
+                            "error_type": error_type,
+                            "severity": error_config['severity'],
+                            "adventurer": self.adventurer_name,
+                            "error_message": str(e)
+                        },
+                        exc_info=True
+                    )
+                    
+                    # Retornar informações sobre o erro para o jogador
+                    return {
+                        "error_type": error_type,
+                        "severity": error_config['severity'],
+                        "message": error_config['message'],
+                        "operation": error_config['operation']
+                    }
 
 if __name__ == "__main__":
     game = AdventureGame()

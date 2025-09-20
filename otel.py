@@ -29,8 +29,12 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
-# Import exemplar-related classes from OpenTelemetry SDK
-from opentelemetry.sdk.metrics import TraceBasedExemplarFilter
+# Import Pyroscope for continuous profiling
+import pyroscope
+
+# Import Flask and PostgreSQL auto-instrumentation
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
 
 import os
 # Interval in seconds for exporting metrics periodically.
@@ -76,13 +80,10 @@ class CustomMetrics:
             # Set up a PeriodicExportingMetricReader to export metrics at regular intervals.
             metric_reader = PeriodicExportingMetricReader(exporter, INTERVAL_SEC)
 
-            # Create a MeterProvider with a TraceBasedExemplarFilter to enable exemplars
-            # when measurements are taken in the context of a sampled span
+            # Create a MeterProvider
             self.meter_provider = MeterProvider(
                 metric_readers=[metric_reader], 
-                resource=Resource.create({"service.name": service_name, "service.instance.id": "instance-1"}),
-                # Configure the TraceBasedExemplarFilter to add exemplars to metrics
-                exemplar_filter=TraceBasedExemplarFilter()
+                resource=Resource.create({"service.name": service_name, "service.instance.id": "instance-1"})
             )
 
             # Set the meter provider as the global meter provider.
@@ -92,7 +93,7 @@ class CustomMetrics:
             self.meter = metrics.get_meter(__name__)
 
             # Indicate successful metrics configuration.
-            print("Metrics configured with OpenTelemetry with exemplar support enabled.")
+            print("Metrics configured with OpenTelemetry.")
         except Exception as e:
             # Handle errors during metrics setup and set the meter to None for safety.
             self.meter = None
@@ -166,3 +167,91 @@ class CustomLogFW:
         print("Logging configured with OpenTelemetry.")
 
         return handler
+
+
+class CustomPyroscope:
+    """
+    CustomPyroscope configura profiling contínuo usando Pyroscope.
+    """
+    def __init__(self, service_name, application_name="adventure-game"):
+        try:
+            # Configure Pyroscope
+            if os.environ.get("SETUP") == "docker":
+                server_address = "http://alloy:4040"
+            else:
+                server_address = "http://localhost:4040"
+            
+            pyroscope.configure(
+                application_name=application_name,  # nome da aplicação
+                server_address=server_address,      # endereço do Pyroscope
+                detect_subprocesses=True,           # detectar subprocessos
+                oncpu=True,                         # profiling de CPU
+                gil_only=True,                      # apenas quando GIL está liberado
+                # Tags adicionais para correlação
+                tags={
+                    "service.name": service_name,
+                    "environment": os.environ.get("ENVIRONMENT", "development"),
+                    "version": "1.0.0"
+                }
+            )
+            print(f"Pyroscope configured successfully. Server: {server_address}")
+            self.configured = True
+        except Exception as e:
+            print(f"Error configuring Pyroscope: {e}")
+            self.configured = False
+    
+    def tag_wrapper(self, tags):
+        """
+        Contextual wrapper para adicionar tags específicas durante operações.
+        
+        :param tags: dict com tags adicionais
+        :return: context manager
+        """
+        if self.configured:
+            return pyroscope.tag_wrapper(tags)
+        else:
+            # Fallback para quando Pyroscope não está configurado
+            from contextlib import nullcontext
+            return nullcontext()
+    
+    def is_configured(self):
+        """Verifica se o Pyroscope está configurado corretamente."""
+        return self.configured
+
+
+class AutoInstrumentation:
+    """
+    Classe para configurar instrumentação automática de bibliotecas.
+    """
+    def __init__(self):
+        self.instrumentors = []
+    
+    def instrument_flask(self, app):
+        """Instrumenta automaticamente uma aplicação Flask"""
+        try:
+            FlaskInstrumentor().instrument_app(app)
+            self.instrumentors.append("flask")
+            print("Flask instrumentado automaticamente com OpenTelemetry")
+        except Exception as e:
+            print(f"Erro ao instrumentar Flask: {e}")
+    
+    def instrument_psycopg2(self):
+        """Instrumenta automaticamente conexões PostgreSQL via psycopg2"""
+        try:
+            Psycopg2Instrumentor().instrument()
+            self.instrumentors.append("psycopg2")
+            print("Psycopg2 instrumentado automaticamente com OpenTelemetry")
+        except Exception as e:
+            print(f"Erro ao instrumentar Psycopg2: {e}")
+    
+    def instrument_all(self, app=None):
+        """Instrumenta todas as bibliotecas suportadas"""
+        self.instrument_psycopg2()
+        if app:
+            self.instrument_flask(app)
+        
+        print(f"Instrumentação automática concluída. Bibliotecas: {', '.join(self.instrumentors)}")
+    
+    def get_instrumented_libraries(self):
+        """Retorna lista de bibliotecas instrumentadas"""
+        return self.instrumentors

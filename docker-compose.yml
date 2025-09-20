@@ -1,7 +1,7 @@
 version: '3'
 services:
   alloy:
-    image: grafana/alloy:v1.7.5
+    image: grafana/alloy:latest
     ports:
       - 12345:12345
       - 4318:4318
@@ -14,7 +14,7 @@ services:
     networks:
       - adventure
   prometheus:
-    image: prom/prometheus:v3.1.0
+    image: prom/prometheus:latest
     ports:
       - 9090:9090
     volumes:
@@ -23,7 +23,7 @@ services:
     networks:
       - adventure
   loki:
-    image: grafana/loki:3.4.2
+    image: grafana/loki:latest
     ports:
       - "3100:3100"
     volumes:
@@ -32,7 +32,7 @@ services:
     networks:
       - adventure
   grafana:
-    image: grafana/grafana:11.5.2
+    image: grafana/grafana:latest
     environment:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_ANONYMOUS_ENABLED=true
@@ -80,8 +80,66 @@ services:
     networks:
       - adventure
 
+  pyroscope:
+    image: grafana/pyroscope:latest
+    ports:
+      - "4040:4040"
+    command:
+      - "server"
+    environment:
+      - PYROSCOPE_LOG_LEVEL=debug
+    networks:
+      - adventure
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: todoapp
+      POSTGRES_USER: todouser
+      POSTGRES_PASSWORD: todopass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - adventure
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todouser -d todoapp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # To-Do App
+  todo-app:
+    build: .
+    ports:
+      - "5001:5000"
+    environment:
+      - SETUP=docker
+      - DB_HOST=postgres
+      - DB_NAME=todoapp
+      - DB_USER=todouser
+      - DB_PASSWORD=todopass
+      - DB_PORT=5432
+      - FLASK_DEBUG=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      alloy:
+        condition: service_started
+    networks:
+      - adventure
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python todo_app.py
+
 networks:
     adventure:
+
+volumes:
+  postgres_data:
     
 
 
