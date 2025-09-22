@@ -20,7 +20,7 @@ services:
       - 9090:9090
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    command: --config.file=/etc/prometheus/prometheus.yml --web.enable-otlp-receiver --enable-feature=exemplar-storage
+    command: --config.file=/etc/prometheus/prometheus.yml --web.enable-otlp-receiver --web.enable-remote-write-receiver --enable-feature=exemplar-storage
     networks:
       - adventure
   loki:

@@ -44,6 +44,10 @@ datasources:
       filterBySpanID: false
     tracesToMetrics:
       datasourceUid: 'prometheus'
+    search:
+      hide: false
+    lokiSearch:
+      datasourceUid: 'loki'
 
 - name: pyroscope
   type: grafana-pyroscope-datasource

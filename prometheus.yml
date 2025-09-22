@@ -6,3 +6,17 @@ storage:
   tsdb:
     out_of_order_time_window: 30m
 
+scrape_configs:
+  # Tempo metrics generator para Service Graph
+  - job_name: 'tempo'
+    static_configs:
+      - targets: ['tempo:3200']
+    scrape_interval: 5s
+    metrics_path: /metrics
+    
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['prometheus:9090']
+    scrape_interval: 15s
+
